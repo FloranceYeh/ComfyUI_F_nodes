@@ -105,14 +105,49 @@ class F_DynamicMultiSwitch:
         return tuple(outputs)
 
 
+class F_DynamicRelay:
+    """
+    左侧与右侧槽位一一对应的动态中转节点。
+    槽位数量遵循 n + 1（n 为已连接槽位数），用于把同组参数分发到多个节点。
+    """
+
+    MAX_SLOTS = 64
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        optional = {}
+        for i in range(cls.MAX_SLOTS):
+            optional[f"in_{i}"] = (ANY_TYPE,)
+        return {
+            "optional": optional,
+        }
+
+    RETURN_TYPES = ByPassTypeTuple((ANY_TYPE,))
+    RETURN_NAMES = ByPassTypeTuple(("out_0",))
+    FUNCTION = "relay"
+    CATEGORY = "F_nodes"
+
+    def relay(self, **kwargs):
+        ExecutionBlocker = _get_execution_blocker_cls()
+
+        outputs = [ExecutionBlocker(None)] * self.MAX_SLOTS
+        for idx in range(self.MAX_SLOTS):
+            key = f"in_{idx}"
+            if key in kwargs:
+                outputs[idx] = kwargs[key]
+        return tuple(outputs)
+
+
 NODE_CLASS_MAPPINGS = {
     "F_DynamicSwitch": F_DynamicSwitch,
     "F_DynamicMultiSwitch": F_DynamicMultiSwitch,
+    "F_DynamicRelay": F_DynamicRelay,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "F_DynamicSwitch": "F Dynamic Switch",
     "F_DynamicMultiSwitch": "F Dynamic Multi Switch",
+    "F_DynamicRelay": "F Dynamic Relay",
 }
 
 WEB_DIRECTORY = "./js"
@@ -123,4 +158,5 @@ __all__ = [
     "WEB_DIRECTORY",
 ]
 
-print("\033[34m[F_nodes]\033[0m Loaded successfully.")
+print("<== F_nodes ==>")
+print("\033[34m[F_nodes]\033[0m Loaded successfully. Nodes: " + ", ".join(NODE_CLASS_MAPPINGS.keys()))
