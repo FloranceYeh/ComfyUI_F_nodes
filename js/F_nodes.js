@@ -2,6 +2,7 @@ import { app } from "../../scripts/app.js";
 
 const SWITCH_NODE_NAMES = new Set(["F_DynamicSwitch", "F_DynamicMultiSwitch"]);
 const RELAY_NODE_NAMES = new Set(["F_DynamicRelay"]);
+const CLIP_SWITCH_NODE_NAME = "F_CLIPTextSwitchEncode";
 const MAX_SLOTS = 64;
 
 function hasLinks(output) {
@@ -208,10 +209,171 @@ function normalizeRelayIO(node) {
     }
 }
 
+function parseClipSlots(payload) {
+    try {
+        const parsed = JSON.parse(String(payload ?? "[]"));
+        if (!Array.isArray(parsed)) return [];
+        return parsed
+            .map((item) => ({
+                title: String(item?.title ?? "").trim(),
+                text: String(item?.text ?? ""),
+            }))
+            .slice(0, MAX_SLOTS);
+    } catch {
+        return [];
+    }
+}
+
+function clipDefaultTitle(text, index) {
+    const firstLine = String(text ?? "")
+        .split(/\r?\n/)
+        .map((x) => x.trim())
+        .find((x) => x.length > 0);
+    if (firstLine) {
+        return firstLine.slice(0, 40);
+    }
+    return `片段 ${index + 1}`;
+}
+
+function ensureClipSlotsNPlusOne(slots) {
+    const normalized = [...slots];
+
+    for (let i = 0; i < normalized.length; i += 1) {
+        const s = normalized[i];
+        if (!s.title && s.text) {
+            s.title = clipDefaultTitle(s.text, i);
+        }
+    }
+
+    while (
+        normalized.length > 1
+        && normalized[normalized.length - 1].text === ""
+        && normalized[normalized.length - 2].text === ""
+    ) {
+        normalized.pop();
+    }
+
+    if (normalized.length === 0 || normalized[normalized.length - 1].text !== "") {
+        normalized.push({ title: "(New Slots)", text: "" });
+    } else if (!normalized[normalized.length - 1].title) {
+        normalized[normalized.length - 1].title = "(New Slots)";
+    }
+
+    return normalized.slice(0, MAX_SLOTS);
+}
+
+function clipOptionLabel(index, title) {
+    return `${index}: ${title || "(未命名)"}`;
+}
+
+function parseSelectedClipIndex(value) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+        const n = Math.trunc(value);
+        return n < 0 ? 0 : n;
+    }
+
+    const pureNum = String(value ?? "").trim();
+    if (/^\d+$/.test(pureNum)) {
+        return Number.parseInt(pureNum, 10);
+    }
+
+    const head = String(value ?? "").split(":", 1)[0].trim();
+    const idx = Number.parseInt(head, 10);
+    return Number.isNaN(idx) ? 0 : idx;
+}
+
+function getClipSwitchWidgets(node) {
+    if (!Array.isArray(node.widgets)) return null;
+    const byName = (name) => node.widgets.find((w) => w?.name === name);
+    return {
+        selectedSlot: byName("selected_slot"),
+        textEditor: byName("text_editor"),
+        saveTitle: byName("save_title"),
+        slotsPayload: byName("slots_payload"),
+    };
+}
+
+function setupClipSwitchNode(node) {
+    const widgets = getClipSwitchWidgets(node);
+    if (!widgets || !widgets.selectedSlot || !widgets.textEditor || !widgets.saveTitle || !widgets.slotsPayload) {
+        return;
+    }
+
+    hideWidget(widgets.slotsPayload);
+
+    if (!node.__fClipSwitchSaveButtonAdded) {
+        node.__fClipSwitchSaveButtonAdded = true;
+        node.addWidget("button", "保存当前文本", null, () => {
+            const w = getClipSwitchWidgets(node);
+            if (!w) return;
+
+            let slots = ensureClipSlotsNPlusOne(parseClipSlots(w.slotsPayload.value));
+            let idx = parseSelectedClipIndex(w.selectedSlot.value);
+            idx = Math.min(Math.max(idx, 0), Math.max(0, slots.length - 1));
+
+            const text = String(w.textEditor.value ?? "");
+            const titleInput = String(w.saveTitle.value ?? "").trim();
+            const title = titleInput || clipDefaultTitle(text, idx);
+
+            slots[idx] = { title, text };
+            slots = ensureClipSlotsNPlusOne(slots);
+            w.slotsPayload.value = JSON.stringify(slots);
+
+            refreshClipSwitchWidgets(node, false, idx);
+            node.setDirtyCanvas(true, true);
+        });
+    }
+
+    if (!widgets.selectedSlot.__fClipCallbackWrapped) {
+        widgets.selectedSlot.__fClipCallbackWrapped = true;
+        const oldCallback = widgets.selectedSlot.callback;
+        widgets.selectedSlot.callback = function (value) {
+            if (oldCallback) oldCallback.call(this, value);
+            if (!node.properties) node.properties = {};
+            node.properties.__fClipSelectedIndex = parseSelectedClipIndex(value);
+            refreshClipSwitchWidgets(node, true, node.properties.__fClipSelectedIndex);
+            node.setDirtyCanvas(true, true);
+        };
+    }
+
+    refreshClipSwitchWidgets(node, false);
+}
+
+function refreshClipSwitchWidgets(node, loadEditorFromSlot, forceIndex) {
+    const w = getClipSwitchWidgets(node);
+    if (!w) return;
+
+    let slots = ensureClipSlotsNPlusOne(parseClipSlots(w.slotsPayload.value));
+    w.slotsPayload.value = JSON.stringify(slots);
+
+    w.selectedSlot.options = w.selectedSlot.options || {};
+    w.selectedSlot.options.min = 0;
+    w.selectedSlot.options.max = Math.max(0, slots.length - 1);
+    w.selectedSlot.options.step = 1;
+
+    if (!node.properties) node.properties = {};
+    const stored = Number.isInteger(node.properties.__fClipSelectedIndex) ? node.properties.__fClipSelectedIndex : undefined;
+
+    let idx = Number.isInteger(forceIndex)
+        ? forceIndex
+        : (Number.isInteger(stored) ? stored : parseSelectedClipIndex(w.selectedSlot.value));
+    idx = Math.min(Math.max(idx, 0), Math.max(0, slots.length - 1));
+    node.properties.__fClipSelectedIndex = idx;
+    w.selectedSlot.value = idx;
+
+    if (loadEditorFromSlot) {
+        const slot = slots[idx];
+        if (slot) {
+            w.textEditor.value = slot.text;
+            w.saveTitle.value = slot.title === "(New Slots)" ? "" : slot.title;
+        }
+    }
+}
+
 app.registerExtension({
     name: "F_nodes.DynamicSwitch",
     async beforeRegisterNodeDef(nodeType, nodeData) {
-        if (!SWITCH_NODE_NAMES.has(nodeData.name) && !RELAY_NODE_NAMES.has(nodeData.name)) return;
+        if (!SWITCH_NODE_NAMES.has(nodeData.name) && !RELAY_NODE_NAMES.has(nodeData.name) && nodeData.name !== CLIP_SWITCH_NODE_NAME) return;
 
         const originalOnNodeCreated = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function () {
@@ -222,8 +384,9 @@ app.registerExtension({
                 normalizeMultiSwitchWidgets(this);
             } else if (RELAY_NODE_NAMES.has(this.comfyClass)) {
                 normalizeRelayIO(this);
+            } else if (this.comfyClass === CLIP_SWITCH_NODE_NAME) {
+                setupClipSwitchNode(this);
             }
-            this.setSize(this.computeSize());
 
             return r;
         };
@@ -237,8 +400,9 @@ app.registerExtension({
                 normalizeMultiSwitchWidgets(this);
             } else if (RELAY_NODE_NAMES.has(this.comfyClass)) {
                 normalizeRelayIO(this);
+            } else if (this.comfyClass === CLIP_SWITCH_NODE_NAME) {
+                setupClipSwitchNode(this);
             }
-            this.setSize(this.computeSize());
             this.setDirtyCanvas(true, true);
 
             return r;
@@ -263,8 +427,9 @@ app.registerExtension({
                     return r;
                 }
                 normalizeRelayIO(this);
+            } else if (this.comfyClass === CLIP_SWITCH_NODE_NAME) {
+                setupClipSwitchNode(this);
             }
-            this.setSize(this.computeSize());
 
             this.setDirtyCanvas(true, true);
             return r;

@@ -1,4 +1,5 @@
 import importlib
+import json
 
 
 class AnyType(str):
@@ -168,11 +169,76 @@ class F_KSamplerPreset:
         return (seed, steps, cfg, sampler_name, scheduler, denoise)
 
 
+class F_CLIPTextSwitchEncode:
+    """
+    多文段 CLIP 文本编码节点。
+    通过 segment_index 在多个文本段中切换并输出 CONDITIONING。
+    """
+
+    PLACEHOLDER_TITLE = "(New Slot)"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "clip": ("CLIP",),
+                "selected_slot": ("INT", {"default": 0, "min": 0, "max": 63, "step": 1}),
+                "text_editor": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": True,
+                        "dynamicPrompts": True,
+                    },
+                ),
+                "save_title": ("STRING", {"default": "", "multiline": False}),
+                "slots_payload": ("STRING", {"default": "[]", "multiline": False}),
+            }
+        }
+
+    RETURN_TYPES = ("CONDITIONING", "STRING")
+    RETURN_NAMES = ("CONDITIONING", "active_text")
+    FUNCTION = "encode_switch"
+    CATEGORY = "F_nodes"
+
+    def encode_switch(self, clip, selected_slot, text_editor, save_title, slots_payload):
+        if clip is None:
+            raise RuntimeError(
+                "ERROR: clip input is invalid: None\n\n"
+                "If the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model."
+            )
+
+        editor_text = "" if text_editor is None else str(text_editor)
+
+        try:
+            slots = json.loads(slots_payload) if slots_payload else []
+            if not isinstance(slots, list):
+                slots = []
+        except Exception:
+            slots = []
+
+        try:
+            idx = int(selected_slot)
+        except Exception:
+            idx = 0
+
+        slot_text = ""
+        if 0 <= idx < len(slots) and isinstance(slots[idx], dict):
+            slot_text = str(slots[idx].get("text", "") or "")
+
+        active_text = slot_text if slot_text != "" else editor_text
+
+        tokens = clip.tokenize(active_text)
+        conditioning = clip.encode_from_tokens_scheduled(tokens)
+        return (conditioning, active_text)
+
+
 NODE_CLASS_MAPPINGS = {
     "F_DynamicSwitch": F_DynamicSwitch,
     "F_DynamicMultiSwitch": F_DynamicMultiSwitch,
     "F_DynamicRelay": F_DynamicRelay,
     "F_KSamplerPreset": F_KSamplerPreset,
+    "F_CLIPTextSwitchEncode": F_CLIPTextSwitchEncode,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -180,6 +246,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "F_DynamicMultiSwitch": "F Dynamic Multi Switch",
     "F_DynamicRelay": "F Dynamic Relay",
     "F_KSamplerPreset": "F KSampler Preset",
+    "F_CLIPTextSwitchEncode": "F CLIP Text Switch Encode",
 }
 
 WEB_DIRECTORY = "./js"
