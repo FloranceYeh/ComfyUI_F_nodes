@@ -138,16 +138,48 @@ class F_DynamicRelay:
         return tuple(outputs)
 
 
+class F_KSamplerPreset:
+    """
+    KSampler 参数预设节点。
+    无数据连线输入，直接输出常用采样参数供其他节点复用。
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        comfy_samplers = importlib.import_module("comfy.samplers")
+
+        return {
+            "required": {
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF, "step": 1}),
+                "steps": ("INT", {"default": 20, "min": 1, "max": 10000, "step": 1}),
+                "cfg": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0, "step": 0.1}),
+                "sampler_name": (comfy_samplers.KSampler.SAMPLERS,),
+                "scheduler": (comfy_samplers.KSampler.SCHEDULERS,),
+                "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+            }
+        }
+
+    RETURN_TYPES = ("INT", "INT", "FLOAT", ANY_TYPE, ANY_TYPE, "FLOAT")
+    RETURN_NAMES = ("seed", "steps", "cfg", "sampler_name", "scheduler", "denoise")
+    FUNCTION = "output_preset"
+    CATEGORY = "F_nodes"
+
+    def output_preset(self, seed, steps, cfg, sampler_name, scheduler, denoise):
+        return (seed, steps, cfg, sampler_name, scheduler, denoise)
+
+
 NODE_CLASS_MAPPINGS = {
     "F_DynamicSwitch": F_DynamicSwitch,
     "F_DynamicMultiSwitch": F_DynamicMultiSwitch,
     "F_DynamicRelay": F_DynamicRelay,
+    "F_KSamplerPreset": F_KSamplerPreset,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "F_DynamicSwitch": "F Dynamic Switch",
     "F_DynamicMultiSwitch": "F Dynamic Multi Switch",
     "F_DynamicRelay": "F Dynamic Relay",
+    "F_KSamplerPreset": "F KSampler Preset",
 }
 
 WEB_DIRECTORY = "./js"
@@ -158,5 +190,11 @@ __all__ = [
     "WEB_DIRECTORY",
 ]
 
+print()
 print("<== F_nodes ==>")
-print("\033[34m[F_nodes]\033[0m Loaded successfully. Nodes: " + ", ".join(NODE_CLASS_MAPPINGS.keys()))
+print("\033[34m[F_nodes]\033[0m Loaded successfully.")
+print("Nodes:")
+for node_name in NODE_CLASS_MAPPINGS:
+    display_name = NODE_DISPLAY_NAME_MAPPINGS.get(node_name, node_name)
+    print(f"  - {display_name} ({node_name})")
+print("<== F_nodes ==>")

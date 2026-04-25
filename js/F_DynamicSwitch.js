@@ -1,7 +1,7 @@
 import { app } from "../../scripts/app.js";
 
 const SWITCH_NODE_NAMES = new Set(["F_DynamicSwitch", "F_DynamicMultiSwitch"]);
-const RELAY_NODE_NAME = "F_DynamicRelay";
+const RELAY_NODE_NAMES = new Set(["F_DynamicRelay"]);
 const MAX_SLOTS = 64;
 
 function hasLinks(output) {
@@ -54,6 +54,16 @@ function getRelaySlotLabel(node, idx) {
     }
 
     return "";
+}
+
+function getRelayLabelStore(node) {
+    if (!node.properties) {
+        node.properties = {};
+    }
+    if (!node.properties.__fRelaySlotLabels || typeof node.properties.__fRelaySlotLabels !== "object") {
+        node.properties.__fRelaySlotLabels = {};
+    }
+    return node.properties.__fRelaySlotLabels;
 }
 
 function hideWidget(widget) {
@@ -172,17 +182,25 @@ function normalizeRelayIO(node) {
         node.addOutput(`out_${next}`, "*");
     }
 
+    const labelStore = getRelayLabelStore(node);
+
     for (let i = 0; i < expected; i += 1) {
         const dynamicLabel = getRelaySlotLabel(node, i);
+        if (dynamicLabel) {
+            labelStore[i] = dynamicLabel;
+        }
+        const persistedLabel = typeof labelStore[i] === "string" ? labelStore[i] : "";
+        const finalLabel = dynamicLabel || persistedLabel;
+
         node.inputs[i].name = `in_${i}`;
         node.inputs[i].type = "*";
         node.outputs[i].name = `out_${i}`;
         node.outputs[i].type = "*";
 
         // 保持真实键名不变，仅修改显示文本，避免影响后端入参键。
-        if (dynamicLabel) {
-            node.inputs[i].label = dynamicLabel;
-            node.outputs[i].label = dynamicLabel;
+        if (finalLabel) {
+            node.inputs[i].label = finalLabel;
+            node.outputs[i].label = finalLabel;
         } else {
             delete node.inputs[i].label;
             delete node.outputs[i].label;
@@ -193,7 +211,7 @@ function normalizeRelayIO(node) {
 app.registerExtension({
     name: "F_nodes.DynamicSwitch",
     async beforeRegisterNodeDef(nodeType, nodeData) {
-        if (!SWITCH_NODE_NAMES.has(nodeData.name) && nodeData.name !== RELAY_NODE_NAME) return;
+        if (!SWITCH_NODE_NAMES.has(nodeData.name) && !RELAY_NODE_NAMES.has(nodeData.name)) return;
 
         const originalOnNodeCreated = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function () {
@@ -202,7 +220,7 @@ app.registerExtension({
             if (SWITCH_NODE_NAMES.has(this.comfyClass)) {
                 normalizeOutputs(this);
                 normalizeMultiSwitchWidgets(this);
-            } else if (this.comfyClass === RELAY_NODE_NAME) {
+            } else if (RELAY_NODE_NAMES.has(this.comfyClass)) {
                 normalizeRelayIO(this);
             }
             this.setSize(this.computeSize());
@@ -217,7 +235,7 @@ app.registerExtension({
             if (SWITCH_NODE_NAMES.has(this.comfyClass)) {
                 normalizeOutputs(this);
                 normalizeMultiSwitchWidgets(this);
-            } else if (this.comfyClass === RELAY_NODE_NAME) {
+            } else if (RELAY_NODE_NAMES.has(this.comfyClass)) {
                 normalizeRelayIO(this);
             }
             this.setSize(this.computeSize());
@@ -239,7 +257,7 @@ app.registerExtension({
                 }
                 normalizeOutputs(this);
                 normalizeMultiSwitchWidgets(this);
-            } else if (this.comfyClass === RELAY_NODE_NAME) {
+            } else if (RELAY_NODE_NAMES.has(this.comfyClass)) {
                 // 1 = inputs, 2 = outputs
                 if ((type !== 1 && type !== 2) || !this.inputs || !this.outputs) {
                     return r;
@@ -256,7 +274,7 @@ app.registerExtension({
         nodeType.prototype.onDrawForeground = function (ctx) {
             if (this.comfyClass === "F_DynamicMultiSwitch") {
                 normalizeMultiSwitchWidgets(this);
-            } else if (this.comfyClass === RELAY_NODE_NAME) {
+            } else if (RELAY_NODE_NAMES.has(this.comfyClass)) {
                 normalizeRelayIO(this);
             }
             if (originalOnDrawForeground) {
