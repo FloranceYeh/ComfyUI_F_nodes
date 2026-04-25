@@ -1,3 +1,6 @@
+import importlib
+
+
 class AnyType(str):
     def __ne__(self, __value: object) -> bool:
         return False
@@ -6,10 +9,17 @@ class AnyType(str):
 ANY_TYPE = AnyType("*")
 
 
+class ByPassTypeTuple(tuple):
+    def __getitem__(self, index):
+        if index > 0:
+            index = 0
+        return super().__getitem__(index)
+
+
 class F_DynamicSwitch:
     """
     1 个任意输入，输出口保持为「已连接数量 n + 1」。
-    通过 active_index 选择哪个输出口输出输入值，其他输出为 None。
+    通过 active_index 选择哪个输出口输出输入值，其他输出为 ExecutionBlocker。
     """
 
     MAX_OUTPUTS = 64
@@ -32,15 +42,20 @@ class F_DynamicSwitch:
             }
         }
 
-    RETURN_TYPES = (ANY_TYPE,) * MAX_OUTPUTS
-    RETURN_NAMES = tuple(f"out_{i}" for i in range(MAX_OUTPUTS))
+    RETURN_TYPES = ByPassTypeTuple((ANY_TYPE,))
+    RETURN_NAMES = ByPassTypeTuple(("out_0",))
     FUNCTION = "route"
     CATEGORY = "F_nodes"
 
     def route(self, any_input, active_index):
-        outputs = [None] * self.MAX_OUTPUTS
-        if 0 <= active_index < self.MAX_OUTPUTS:
-            outputs[active_index] = any_input
+        try:
+            ExecutionBlocker = importlib.import_module("comfy_execution.graph").ExecutionBlocker
+        except Exception:
+            ExecutionBlocker = importlib.import_module("comfy_execution.graph_utils").ExecutionBlocker
+
+        outputs = [ExecutionBlocker(None)] * self.MAX_OUTPUTS
+        selected = min(max(int(active_index), 0), self.MAX_OUTPUTS - 1)
+        outputs[selected] = any_input
         return tuple(outputs)
 
 
