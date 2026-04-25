@@ -16,6 +16,13 @@ class ByPassTypeTuple(tuple):
         return super().__getitem__(index)
 
 
+def _get_execution_blocker_cls():
+    try:
+        return importlib.import_module("comfy_execution.graph").ExecutionBlocker
+    except Exception:
+        return importlib.import_module("comfy_execution.graph_utils").ExecutionBlocker
+
+
 class F_DynamicSwitch:
     """
     1 个任意输入，输出口保持为「已连接数量 n + 1」。
@@ -48,10 +55,7 @@ class F_DynamicSwitch:
     CATEGORY = "F_nodes"
 
     def route(self, any_input, active_index):
-        try:
-            ExecutionBlocker = importlib.import_module("comfy_execution.graph").ExecutionBlocker
-        except Exception:
-            ExecutionBlocker = importlib.import_module("comfy_execution.graph_utils").ExecutionBlocker
+        ExecutionBlocker = _get_execution_blocker_cls()
 
         outputs = [ExecutionBlocker(None)] * self.MAX_OUTPUTS
         selected = min(max(int(active_index), 0), self.MAX_OUTPUTS - 1)
@@ -59,12 +63,56 @@ class F_DynamicSwitch:
         return tuple(outputs)
 
 
+class F_DynamicMultiSwitch:
+    """
+    1 个任意输入，输出口保持为「已连接数量 n + 1」。
+    通过 active_0..active_n 勾选同时激活多个输出，未激活输出为 ExecutionBlocker。
+    """
+
+    MAX_OUTPUTS = 64
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        required = {
+            "any_input": (ANY_TYPE,),
+        }
+        for i in range(cls.MAX_OUTPUTS):
+            required[f"active_{i}"] = (
+                "BOOLEAN",
+                {
+                    "default": i == 0,
+                    "label_on": f"ON #{i}",
+                    "label_off": f"OFF #{i}",
+                },
+            )
+
+        return {
+            "required": required
+        }
+
+    RETURN_TYPES = ByPassTypeTuple((ANY_TYPE,))
+    RETURN_NAMES = ByPassTypeTuple(("out_0",))
+    FUNCTION = "route_multi"
+    CATEGORY = "F_nodes"
+
+    def route_multi(self, any_input, **kwargs):
+        ExecutionBlocker = _get_execution_blocker_cls()
+
+        outputs = [ExecutionBlocker(None)] * self.MAX_OUTPUTS
+        for idx in range(self.MAX_OUTPUTS):
+            if kwargs.get(f"active_{idx}", False):
+                outputs[idx] = any_input
+        return tuple(outputs)
+
+
 NODE_CLASS_MAPPINGS = {
     "F_DynamicSwitch": F_DynamicSwitch,
+    "F_DynamicMultiSwitch": F_DynamicMultiSwitch,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "F_DynamicSwitch": "F Dynamic Switch",
+    "F_DynamicMultiSwitch": "F Dynamic Multi Switch",
 }
 
 WEB_DIRECTORY = "./js"

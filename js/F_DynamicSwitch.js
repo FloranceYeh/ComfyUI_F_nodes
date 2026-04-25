@@ -1,10 +1,54 @@
 import { app } from "../../scripts/app.js";
 
-const NODE_NAME = "F_DynamicSwitch";
+const SUPPORTED_NODE_NAMES = new Set(["F_DynamicSwitch", "F_DynamicMultiSwitch"]);
 const MAX_OUTPUTS = 64;
 
 function hasLinks(output) {
     return Array.isArray(output?.links) && output.links.length > 0;
+}
+
+function hideWidget(widget) {
+    if (widget.__fHidden) return;
+    widget.__fOriginalType = widget.type;
+    widget.__fOriginalComputeSize = widget.computeSize;
+    widget.__fOriginalHidden = widget.hidden;
+    widget.hidden = true;
+    widget.type = "hidden";
+    widget.computeSize = () => [0, -4];
+    widget.__fHidden = true;
+}
+
+function showWidget(widget) {
+    if (!widget.__fHidden) return;
+    widget.type = widget.__fOriginalType || "toggle";
+    widget.hidden = widget.__fOriginalHidden ?? false;
+    if (widget.__fOriginalComputeSize) {
+        widget.computeSize = widget.__fOriginalComputeSize;
+    } else {
+        delete widget.computeSize;
+    }
+    delete widget.__fOriginalHidden;
+    widget.__fHidden = false;
+}
+
+function normalizeMultiSwitchWidgets(node) {
+    if (node.comfyClass !== "F_DynamicMultiSwitch" || !Array.isArray(node.widgets)) return;
+
+    const outputCount = Array.isArray(node.outputs) && node.outputs.length > 0 ? node.outputs.length : 1;
+
+    for (const widget of node.widgets) {
+        if (!widget?.name) continue;
+        const match = String(widget.name).match(/active_(\d+)/i);
+        if (!match) continue;
+        const idx = Number.parseInt(match[1], 10);
+        if (Number.isNaN(idx)) continue;
+
+        if (idx < outputCount) {
+            showWidget(widget);
+        } else {
+            hideWidget(widget);
+        }
+    }
 }
 
 function normalizeOutputs(node) {
@@ -40,7 +84,7 @@ function normalizeOutputs(node) {
 app.registerExtension({
     name: "F_nodes.DynamicSwitch",
     async beforeRegisterNodeDef(nodeType, nodeData) {
-        if (nodeData.name !== NODE_NAME) return;
+        if (!SUPPORTED_NODE_NAMES.has(nodeData.name)) return;
 
         const originalOnNodeCreated = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function () {
@@ -48,6 +92,8 @@ app.registerExtension({
 
             // 新建节点时保持 n+1 规则（通常为 1 个空输出）。
             normalizeOutputs(this);
+            normalizeMultiSwitchWidgets(this);
+            this.setSize(this.computeSize());
 
             return r;
         };
@@ -58,6 +104,8 @@ app.registerExtension({
 
             // 加载工作流后立即压缩多余输出，防止节点过长。
             normalizeOutputs(this);
+            normalizeMultiSwitchWidgets(this);
+            this.setSize(this.computeSize());
             this.setDirtyCanvas(true, true);
 
             return r;
@@ -75,9 +123,22 @@ app.registerExtension({
             }
 
             normalizeOutputs(this);
+            normalizeMultiSwitchWidgets(this);
+            this.setSize(this.computeSize());
 
             this.setDirtyCanvas(true, true);
             return r;
+        };
+
+        const originalOnDrawForeground = nodeType.prototype.onDrawForeground;
+        nodeType.prototype.onDrawForeground = function (ctx) {
+            if (this.comfyClass === "F_DynamicMultiSwitch") {
+                normalizeMultiSwitchWidgets(this);
+            }
+            if (originalOnDrawForeground) {
+                return originalOnDrawForeground.apply(this, arguments);
+            }
+            return undefined;
         };
     },
 });
